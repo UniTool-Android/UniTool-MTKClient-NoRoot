@@ -391,7 +391,10 @@ class Main(metaclass=LogBase):
             config.cert = cert
         except Exception:
             pass
-        import os; mtk = Mtk(config=config, loglevel=loglevel, serialportname=os.environ.get("TERMUX_USB_FD"))
+        import os; # USB Host access on Android is provided by the app's UsbManager +
+        # broker-enabled libusb backend. Do not treat a Termux USB FD as a
+        # serial-port path; preserve only an explicitly requested serial port.
+        mtk = Mtk(config=config, loglevel=loglevel, serialportname=serialport)
         config.set_peek(mtk.daloader.peek)
         if mtk.config.debugmode:
             logfilename = os.path.join("logs", "log.txt")
