@@ -37,7 +37,7 @@ int main(int argc, char **argv) {
     if (!slash) return 1;
     *slash = 0;
     if (!join_path(home,sizeof(home),root,"python") ||
-        !join_path(stdlib,sizeof(stdlib),home,"lib/python" PYTHON_VERSION_STRING) ||
+        snprintf(stdlib,sizeof(stdlib),"%s/lib/python%d.%d",home,PY_MAJOR_VERSION,PY_MINOR_VERSION) <= 0 ||\n        strlen(stdlib) >= sizeof(stdlib) ||
         !join_path(dynload,sizeof(dynload),stdlib,"lib-dynload") ||
         !join_path(site,sizeof(site),home,"site-packages") ||
         !join_path(app,sizeof(app),root,"app")) {
