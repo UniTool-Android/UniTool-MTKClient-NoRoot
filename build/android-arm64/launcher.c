@@ -36,12 +36,16 @@ int main(int argc, char **argv) {
     slash = strrchr(root, '/');
     if (!slash) return 1;
     *slash = 0;
-    if (!join_path(home,sizeof(home),root,"python") ||
-        snprintf(stdlib,sizeof(stdlib),"%s/lib/python%d.%d",home,PY_MAJOR_VERSION,PY_MINOR_VERSION) <= 0 ||\n        strlen(stdlib) >= sizeof(stdlib) ||
+    if (!join_path(home,sizeof(home),root,"python")) {
+        fprintf(stderr,"mtk: runtime path too long\\n"); return 1;
+    }
+    int stdlib_len = snprintf(stdlib,sizeof(stdlib),"%s/lib/python%d.%d",
+                              home,PY_MAJOR_VERSION,PY_MINOR_VERSION);
+    if (stdlib_len < 0 || (size_t)stdlib_len >= sizeof(stdlib) ||
         !join_path(dynload,sizeof(dynload),stdlib,"lib-dynload") ||
         !join_path(site,sizeof(site),home,"site-packages") ||
         !join_path(app,sizeof(app),root,"app")) {
-        fprintf(stderr,"mtk: runtime path too long\n"); return 1;
+        fprintf(stderr,"mtk: runtime path too long\\n"); return 1;
     }
     PyConfig c;
     PyConfig_InitIsolatedConfig(&c);
