@@ -16,7 +16,64 @@ import usb.backend.libusb1
 from struct import pack, calcsize
 from enum import Enum
 from binascii import hexlify
-from ctypes import c_void_p, c_int
+from ctypes import CDLL, RTLD_GLOBAL, c_void_p, c_int
+
+
+_ANDROID_LIBUSB_HANDLES = []
+
+
+def _android_libusb_backend():
+    """Load Adbify's broker-enabled libusb by absolute path.
+
+    Adbify installs libusb.so and libusb_bridge.so under $PREFIX/lib. The
+    bridge is preloaded globally before libusb so its symbols/dependencies are
+    available to the broker-enabled libusb build.
+    """
+    configured = os.environ.get("UNITOOL_LIBUSB_PATH")
+    prefix = os.environ.get("PREFIX")
+    candidates = [configured] if configured else []
+    if prefix:
+        candidates.extend([
+            os.path.join(prefix, "lib", "libusb.so"),
+            os.path.join(prefix, "lib", "libusb-1.0.so"),
+        ])
+
+    libusb_path = next((os.path.realpath(p) for p in candidates
+                        if p and os.path.isfile(p)), None)
+    if libusb_path is None:
+        raise RuntimeError(
+            "Adbify libusb not found. Set UNITOOL_LIBUSB_PATH to the absolute "
+            "path of Adbify's libusb.so or install it under $PREFIX/lib."
+        )
+
+    bridge_configured = os.environ.get("UNITOOL_LIBUSB_BRIDGE_PATH")
+    bridge_candidates = [bridge_configured] if bridge_configured else []
+    if prefix:
+        bridge_candidates.append(os.path.join(prefix, "lib", "libusb_bridge.so"))
+    bridge_path = next((os.path.realpath(p) for p in bridge_candidates
+                        if p and os.path.isfile(p)), None)
+    if bridge_path is None:
+        raise RuntimeError(
+            "Adbify libusb_bridge.so not found. Set UNITOOL_LIBUSB_BRIDGE_PATH "
+            "or install it under $PREFIX/lib."
+        )
+
+    # Keep both handles alive for the lifetime of the PyUSB backend.
+    _ANDROID_LIBUSB_HANDLES.append(CDLL(bridge_path, mode=RTLD_GLOBAL))
+    _ANDROID_LIBUSB_HANDLES.append(CDLL(libusb_path, mode=RTLD_GLOBAL))
+    return usb.backend.libusb1.get_backend(find_library=lambda _name: libusb_path)
+
+
+def _create_libusb_backend():
+    # Android must use Adbify's USB-broker-aware libraries, never a random
+    # system/Termux libusb discovered by the dynamic linker.
+    prefix = os.environ.get("PREFIX", "")
+    if sys.platform.startswith("linux") and (
+        os.environ.get("ANDROID_ROOT") or os.environ.get("UNITOOL_LIBUSB_PATH")
+        or prefix.startswith("/data/user/") or prefix.startswith("/data/data/")
+    ):
+        return _android_libusb_backend()
+    return usb.backend.libusb1.get_backend(find_library=lambda _name: "libusb-1.0.so")
 
 from mtkclient.Library.DA.xmlflash.xml_param import max_xml_data_length
 from mtkclient.Library.utils import write_object
@@ -130,7 +187,11 @@ class UsbClass(DeviceClass):
         self.is_serial = False
         self.queue = Queue()
         if sys.platform.startswith('freebsd') or sys.platform.startswith('linux') or sys.platform.startswith('darwin'):
-            self.backend = usb.backend.libusb1.get_backend(find_library=lambda x: "libusb-1.0.so")
+            try:
+                self.backend = _create_libusb_backend()
+            except Exception as err:
+                self.backend = None
+                self.error(f"Unable to initialize libusb backend: {err}")
         elif sys.platform.startswith('win32'):
             if calcsize("P") * 8 == 64:
                 self.backend = usb.backend.libusb1.get_backend(find_library=lambda x: "libusb-1.0.dll")
@@ -140,8 +201,9 @@ class UsbClass(DeviceClass):
             try:
                 self.backend.lib.libusb_set_option.argtypes = [c_void_p, c_int]
                 self.backend.lib.libusb_set_option(self.backend.ctx, 1)
-            except Exception:
-                self.backend = None
+            except Exception as err:
+                # This optional tuning call must not disable a working backend.
+                self.debug(f"libusb_set_option unavailable: {err}")
 
     def set_fast_mode(self, enabled):
         self.fast = bool(enabled)
