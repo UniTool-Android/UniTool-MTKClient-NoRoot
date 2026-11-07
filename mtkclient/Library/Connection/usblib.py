@@ -406,15 +406,37 @@ class UsbClass(DeviceClass):
             self.error("Couldn't get device configuration.")
             return False
         if self.interface == -1:
+            interfaces = []
             for interfacenum in range(0, self.configuration.bNumInterfaces):
                 itf = usb.util.find_descriptor(self.configuration, bInterfaceNumber=interfacenum)
-                if self.devclass != -1:
-                    if itf.bInterfaceClass == self.devclass:  # MassStorage
-                        self.interface = interfacenum
-                        break
-                else:
+                if itf is not None:
+                    interfaces.append((interfacenum, itf))
+
+            # Prefer the configured CDC data interface when present.
+            for interfacenum, itf in interfaces:
+                if self.devclass != -1 and itf.bInterfaceClass == self.devclass:
                     self.interface = interfacenum
                     break
+
+            # MediaTek 0E8D:2000 devices may expose a vendor/CDC-control
+            # interface rather than CDC-data class 0x0A. Select the first
+            # interface that actually has both bulk directions instead of
+            # rejecting a valid authorized UsbManager session.
+            if self.interface == -1:
+                for interfacenum, itf in interfaces:
+                    has_in = usb.util.find_descriptor(
+                        itf,
+                        custom_match=lambda ep: usb.util.endpoint_direction(ep.bEndpointAddress)
+                        == usb.util.ENDPOINT_IN
+                    ) is not None
+                    has_out = usb.util.find_descriptor(
+                        itf,
+                        custom_match=lambda ep: usb.util.endpoint_direction(ep.bEndpointAddress)
+                        == usb.util.ENDPOINT_OUT
+                    ) is not None
+                    if has_in and has_out:
+                        self.interface = interfacenum
+                        break
 
         self.debug(self.configuration)
         if self.interface > self.configuration.bNumInterfaces:
