@@ -1,26 +1,13 @@
-# Adbify USB runtime integration
+# Adbify USB integration reference
 
-The Android ARM64 MTKClient backend locates Adbify's libraries using the absolute paths exported by the Adbify terminal:
+See [antumbra-android](https://github.com/UniTool-Android/antumbra-android), specifically:
 
-- `UNITOOL_LIBUSB_PATH=$PREFIX/lib/libusb.so`
-- `UNITOOL_LIBUSB_BRIDGE_PATH=$PREFIX/lib/libusb_bridge.so`
+- `android/app/src/main/java/com/penumbra/antumbra/UsbHelper.kt`
+- `crates/android-usb/src/lib.rs`
+- `crates/jni-bridge/src/lib.rs`
 
-The PyUSB backend preloads the bridge with `RTLD_GLOBAL`, then opens Adbify's libusb by absolute path. Both handles are retained for the backend lifetime. Non-Android PyUSB backend selection remains unchanged.
+It shows Android's USB Host permission and connection lifecycle and provides a Rust `MtkPort` implementation over JNI. This is a Java USB Host backend, not Adbify's libusb broker. It should not be represented as using `libusb_bridge.so`.
 
-## Important limitation
+The reference's DA/flash/unlock/relock JNI entrypoints are unfinished placeholders and its workflow uses `continue-on-error: true` on build steps. Treat it as an architectural reference, not a tested complete implementation.
 
-This configures library selection and loading only. The Adbify repository currently packages `libusb_bridge.so` as a binary without its source, exported ABI/header, IPC protocol, or an app-side USB permission/session service. Therefore, do not claim that Android USB permission brokerage or device I/O works until that contract is supplied and tested.
-
-Android USB permission is granted to the Adbify app UID through `UsbManager`; environment variables and loading a shared object do not transfer that permission to a child process by themselves.
-
-## Runtime verification
-
-From an Adbify terminal session, verify both paths exist and point to the expected app-private files:
-
-```sh
-test -r "$UNITOOL_LIBUSB_PATH"
-test -r "$UNITOOL_LIBUSB_BRIDGE_PATH"
-printf '%s\n' "$UNITOOL_LIBUSB_PATH" "$UNITOOL_LIBUSB_BRIDGE_PATH"
-```
-
-A successful file check or `dlopen()` is not a USB hardware test. Full validation requires a granted Android USB session and successful enumerate/claim/control/bulk/disconnect tests.
+The required Adbify libusb bridge integration still needs the bridge's source or an authoritative ABI/IPC contract.
