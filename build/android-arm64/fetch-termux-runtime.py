@@ -4,18 +4,37 @@
 This stages Android/Bionic libraries; it never executes Android binaries on the
 Ubuntu runner. Dependencies are resolved from Termux's signed repository index.
 """
-import lzma, pathlib, re, subprocess, sys, urllib.request
+import bz2, gzip, lzma, pathlib, re, subprocess, sys, urllib.error, urllib.request
 
 BASE = "https://packages.termux.dev/apt/termux-main"
 ARCH = "aarch64"
 PREFIX = pathlib.Path("out/termux-prefix")
 CACHE = pathlib.Path("out/debs")
-INDEX = f"{BASE}/dists/stable/main/binary-{ARCH}/Packages.xz"
+INDEX_BASE = f"{BASE}/dists/stable/main/binary-{ARCH}/Packages"
 CACHE.mkdir(parents=True, exist_ok=True)
 PREFIX.mkdir(parents=True, exist_ok=True)
 
-with urllib.request.urlopen(INDEX, timeout=60) as response:
-    raw = lzma.decompress(response.read()).decode("utf-8", "replace")
+# Termux publishes Packages, Packages.gz and Packages.bz2; Packages.xz is not guaranteed.
+raw_bytes = None
+last_error = None
+for suffix, decoder in (
+    (".gz", gzip.decompress),
+    (".bz2", bz2.decompress),
+    ("", lambda data: data),
+    (".xz", lzma.decompress),
+):
+    index_url = INDEX_BASE + suffix
+    try:
+        with urllib.request.urlopen(index_url, timeout=60) as response:
+            payload = response.read()
+        raw_bytes = decoder(payload)
+        print(f"Using Termux package index: {index_url}")
+        break
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError, lzma.LZMAError) as error:
+        last_error = error
+if raw_bytes is None:
+    raise SystemExit(f"Unable to download a supported Termux package index from {INDEX_BASE}: {last_error}")
+raw = raw_bytes.decode("utf-8", "replace")
 
 records = {}
 for block in raw.split("\n\n"):
