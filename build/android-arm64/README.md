@@ -107,7 +107,7 @@ these imports before compiling:
 - `usb` (PyUSB)
 - `serial` (pyserial)
 - `colorama`
-- `Crypto.Cipher.AES` and `Crypto.Hash.SHA256` (PyCryptodome)
+- `Crypto.Cipher.AES` and `Crypto.Hash.SHA256` (PyCryptodome)\n- `Cryptodome.Cipher.AES` and `Cryptodome.Hash.SHA256` (PyCryptodomeX)
 
 If pip reports a compiler path under `darwin-x86_64` or another host that is
 not the current Android device, do not reuse that cross-build virtual
@@ -120,7 +120,7 @@ unset _PYTHON_HOST_PLATFORM _PYTHON_SYSCONFIGDATA_NAME
 export CC=clang
 export CXX=clang++
 export LDSHARED="clang -shared"
-python -m pip install --no-build-isolation pyusb pyserial colorama pycryptodome
+python -m pip install --no-build-isolation pyusb pyserial colorama pycryptodome pycryptodomex
 ```
 
 Build the executable bundle:
