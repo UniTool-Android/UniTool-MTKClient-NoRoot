@@ -101,11 +101,12 @@ Entry point: app/mtk.py
 Runtime: bundled Python standard library, site-packages and libpython
 EOF
 
-cat > "$OUT/mtk" <<'EOF'
+cat > "$OUT/mtk" <<EOF
 #!/system/bin/sh
-HERE="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-export PYTHONHOME="$HERE/python"
-exec "$HERE/bin/mtk" "$HERE/app/mtk.py" "$@"
+HERE="\$(CDPATH= cd -- "\$(dirname -- "\$0")" && pwd)"
+export PYTHONHOME="\$HERE/python"
+export LD_LIBRARY_PATH="\$HERE/lib:$PREFIX/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+exec "\$HERE/bin/mtk" "\$HERE/app/mtk.py" "\$@"
 EOF
 chmod 755 "$OUT/bin/mtk" "$OUT/mtk"
 
