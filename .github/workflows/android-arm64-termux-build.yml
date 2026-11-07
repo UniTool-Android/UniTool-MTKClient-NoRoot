@@ -130,7 +130,8 @@ jobs:
           test -f "dist/android-arm64/lib/libpython$PYTHON_VERSION.so"
           test -d dist/android-arm64/python/site-packages/usb
           test -d dist/android-arm64/python/site-packages/serial
-          tar -tzf dist/android-arm64.tar.gz | grep -q 'android-arm64/bin/mtk'
+          tar -tzf dist/android-arm64.tar.gz > "$RUNNER_TEMP/android-arm64-files.txt"
+          grep -Fqx 'android-arm64/bin/mtk' "$RUNNER_TEMP/android-arm64-files.txt"
 
       - uses: actions/upload-artifact@v4
         with:
