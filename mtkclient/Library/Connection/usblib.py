@@ -364,6 +364,13 @@ class UsbClass(DeviceClass):
         self.device = None
         self.EP_OUT = None
         self.EP_IN = None
+        if self.backend is None:
+            self.error(
+                "PyUSB has no active libusb backend. In UniTool, verify "
+                "UNITOOL_LIBUSB_PATH and UNITOOL_LIBUSB_BRIDGE_PATH."
+            )
+            return False
+
         def find_mtk_device(devices):
             for dev in devices:
                 if dev.idVendor not in [0x0E8D, 0x1004, 0x22d9, 0x0FCE]:
