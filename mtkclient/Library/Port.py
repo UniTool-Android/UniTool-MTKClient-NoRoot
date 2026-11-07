@@ -50,7 +50,7 @@ class Port(metaclass=LogBase):
             self.__logger.setLevel(logging.INFO)
 
     def wait_for_device(self, max_attempts=300, interval=0.25, wait=True):
-        # Retry loop - wait for the device to be plugged in (BROM) instead of failing immediately
+        # Retry for either MediaTek Preloader or BootROM enumeration.
         for attempt in range(max_attempts):
             try:
                 self.cdc.connected = self.cdc.connect()
@@ -62,7 +62,7 @@ class Port(metaclass=LogBase):
             if not wait:
                 return False
             if attempt == 0:
-                self.info("Waiting for device... plug the powered-off phone with USB cable (BROM mode)")
+                self.info("Waiting for MediaTek device... connect in Preloader or BootROM (BROM) mode.")
             elif attempt % 15 == 0:
                 self.info(f"Still waiting for device... ({attempt * interval}s elapsed)")
             time.sleep(interval)
@@ -192,38 +192,55 @@ class Port(metaclass=LogBase):
         return False
 
     def handshake(self, maxtries=None, loop=0):
+        """Connect and perform the MTK sync handshake in Preloader or BROM.
+
+        Preloader PIDs use the leading 0xA0 sync byte; BROM PIDs use the
+        four-byte complement handshake directly. UsbClass owns USB transport
+        and interface/endpoint selection for both modes.
+        """
         counter = 0
-
-        while not self.cdc.connected:
+        while maxtries is None or counter < maxtries:
+            counter += 1
             try:
-                if maxtries is not None and counter == maxtries:
-                    break
-                counter += 1
-                if self.wait_for_device(max_attempts=1, wait=False) and self.run_handshake():
-                    return True
-                else:
-                    if loop == 5:
-                        sys.stdout.write('\n')
-                        self.info("Hint:\n\nPower off the phone before connecting.\n" +
-                                  "For brom mode, press and hold vol up, vol dwn, or all hw buttons and " +
-                                  "connect usb.\n" +
-                                  "For preloader mode, don't press any hw button and connect usb.\n"
-                                  "If it is already connected and on, hold power for 10 seconds to reset.\n")
-                        sys.stdout.write('\n')
-                    if loop >= 10:
-                        sys.stdout.write('.')
-                    if loop >= 20:
-                        sys.stdout.write('\n')
-                        loop = 0
-                    loop += 1
-                    time.sleep(0.3)
-                    sys.stdout.flush()
+                if not self.cdc.connected:
+                    if not self.wait_for_device(max_attempts=1, wait=False):
+                        if loop == 5:
+                            self.info(
+                                "Waiting for a MediaTek device. Connect either "
+                                "Preloader mode (normal powered-off connection) "
+                                "or BootROM/BROM mode (hardware-key combination)."
+                            )
+                        if loop >= 10:
+                            sys.stdout.write(".")
+                            sys.stdout.flush()
+                        loop = (loop + 1) % 20
+                        time.sleep(0.25)
+                        continue
 
-            except Exception as serr:
-                if "access denied" in str(serr):
-                    self.warning(str(serr))
-                self.debug(str(serr))
-                pass
+                # A device may already be connected by the caller. Do not
+                # skip its handshake just because UsbClass.connected is true.
+                if self.run_handshake():
+                    self.info(
+                        f"MediaTek sync established: "
+                        f"VID={self.cdc.vid:04X} PID={self.cdc.pid:04X}"
+                    )
+                    return True
+
+                self.warning(
+                    f"MTK sync failed for VID={self.cdc.vid:04X} "
+                    f"PID={self.cdc.pid:04X}; waiting for re-enumeration."
+                )
+                self.cdc.close()
+                self.cdc.connected = False
+            except Exception as err:
+                self.warning(f"MTK USB handshake error: {err}")
+                try:
+                    self.cdc.close()
+                except Exception:
+                    pass
+                self.cdc.connected = False
+            time.sleep(0.25)
+
         return False
 
     def mtk_cmd(self, value, bytestoread=0, nocmd=False):
