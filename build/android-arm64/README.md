@@ -130,7 +130,7 @@ chmod +x build/android-arm64/build-termux.sh
 ./build/android-arm64/build-termux.sh
 ```
 
-The output is `dist/android-arm64/`. Run the generated launcher:
+The output is `dist/android-arm64/`, with a compressed bundle at `dist/android-arm64.tar.gz` and a SHA-256 file when `sha256sum` is available. Run the generated launcher:
 
 ```sh
 ./dist/android-arm64/mtk --help
