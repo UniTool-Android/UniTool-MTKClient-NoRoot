@@ -46,7 +46,7 @@ PY
 # Verify required Python imports before compiling the native launcher.
 "$PYTHON" - <<'PY'
 import importlib
-modules = ("usb", "serial", "colorama", "Crypto.Cipher.AES", "Crypto.Hash.SHA256")
+modules = ("usb", "serial", "colorama", "Crypto.Cipher.AES", "Crypto.Hash.SHA256", "Cryptodome.Cipher.AES", "Cryptodome.Hash.SHA256")
 failed = []
 for name in modules:
     try:
