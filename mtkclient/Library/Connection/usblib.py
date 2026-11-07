@@ -364,14 +364,26 @@ class UsbClass(DeviceClass):
         self.device = None
         self.EP_OUT = None
         self.EP_IN = None
+        def find_mtk_device(devices):
+            for dev in devices:
+                if dev.idVendor not in [0x0E8D, 0x1004, 0x22d9, 0x0FCE]:
+                    continue
+                if dev.idVendor in self.portconfig and dev.idProduct in self.portconfig[dev.idVendor]:
+                    return dev
+            return None
+
+        # The device-level class can be 0x00 on some preloaders even when
+        # the CDC class is declared on the interface. Keep the fast filtered
+        # scan, then retry without a class filter before reporting no device.
         devices = usb.core.find(find_all=True, bDeviceClass=devclass, backend=self.backend)
-        for dev in list(filter(lambda x: x.idVendor in [0x0E8D, 0x1004, 0x22d9, 0x0FCE], devices)):
-            if dev.idVendor in self.portconfig and dev.idProduct in self.portconfig[dev.idVendor]:
-                self.device = dev
-                self.vid = dev.idVendor
-                self.pid = dev.idProduct
-                self.interface = self.portconfig[dev.idVendor][dev.idProduct]
-                break
+        self.device = find_mtk_device(devices)
+        if self.device is None:
+            devices = usb.core.find(find_all=True, backend=self.backend)
+            self.device = find_mtk_device(devices)
+        if self.device is not None:
+            self.vid = self.device.idVendor
+            self.pid = self.device.idProduct
+            self.interface = self.portconfig[self.vid][self.pid]
         if self.device is None:
             self.debug("Couldn't detect the device. Is it connected ?")
             return False
@@ -381,7 +393,13 @@ class UsbClass(DeviceClass):
             if e.strerror == "Configuration not set":
                 self.device.set_configuration()
                 self.configuration = self.device.get_active_configuration()
-            if e.errno == 13:
+            if e.errno == 13 and not (
+                os.environ.get("UNITOOL_LIBUSB_PATH")
+                or os.environ.get("UNITOOL_LIBUSB_BRIDGE_PATH")
+                or os.environ.get("ANDROID_ROOT")
+            ):
+                # Keep the legacy libusb0 fallback on desktop Linux only.
+                # Android must stay on UniTool's UsbManager-authorized backend.
                 self.backend = usb.backend.libusb0.get_backend()
                 self.device = usb.core.find(idVendor=self.vid, idProduct=self.pid, backend=self.backend)
         if self.configuration is None:
