@@ -1,22 +1,26 @@
-# Adbify USB runtime integration contract
+# Adbify USB runtime integration
 
-This project must use the exact Adbify-packaged ARM64 native libraries:
-- `$PREFIX/lib/libusb_bridge.so`
-- `$PREFIX/lib/libusb.so`
+The Android ARM64 MTKClient backend locates Adbify's libraries using the absolute paths exported by the Adbify terminal:
 
-The terminal runtime exports:
-- `PREFIX=<app-private files/usr>`
-- `LD_LIBRARY_PATH=$PREFIX/lib:<ApplicationInfo.nativeLibraryDir>`
 - `UNITOOL_LIBUSB_PATH=$PREFIX/lib/libusb.so`
 - `UNITOOL_LIBUSB_BRIDGE_PATH=$PREFIX/lib/libusb_bridge.so`
 
-The paths above are canonicalized by the app before starting a child process. Clients must never silently fall back to system libusb on Android. Missing bridge/library files must produce a clear startup error. Keep CDLL handles alive for the lifetime of PyUSB/libusb use, preload bridge with RTLD_GLOBAL before libusb, and verify the loaded file paths.
+The PyUSB backend preloads the bridge with `RTLD_GLOBAL`, then opens Adbify's libusb by absolute path. Both handles are retained for the backend lifetime. Non-Android PyUSB backend selection remains unchanged.
 
-USB permissions:
-- USB host permission is granted by Android for the app UID/device via UsbManager.
-- A child CLI process cannot independently obtain Android UsbManager permission. Any bridge relying on app-side permission brokerage needs a documented IPC/JNI contract and an open app-side service/session.
-- Do not claim that the terminal environment alone grants USB permission.
-- Keep non-Android PyUSB backend behavior unchanged.
+## Important limitation
 
-Architecture goal:
-Adbify is the only Android USB backend/runtime owner. MTKClient and Umbrage consume it; do not statically or dynamically load a second libusb build, do not use raw Android bulkTransfer in parallel, and do not ship duplicate USB drivers.
+This configures library selection and loading only. The Adbify repository currently packages `libusb_bridge.so` as a binary without its source, exported ABI/header, IPC protocol, or an app-side USB permission/session service. Therefore, do not claim that Android USB permission brokerage or device I/O works until that contract is supplied and tested.
+
+Android USB permission is granted to the Adbify app UID through `UsbManager`; environment variables and loading a shared object do not transfer that permission to a child process by themselves.
+
+## Runtime verification
+
+From an Adbify terminal session, verify both paths exist and point to the expected app-private files:
+
+```sh
+test -r "$UNITOOL_LIBUSB_PATH"
+test -r "$UNITOOL_LIBUSB_BRIDGE_PATH"
+printf '%s\n' "$UNITOOL_LIBUSB_PATH" "$UNITOOL_LIBUSB_BRIDGE_PATH"
+```
+
+A successful file check or `dlopen()` is not a USB hardware test. Full validation requires a granted Android USB session and successful enumerate/claim/control/bulk/disconnect tests.
