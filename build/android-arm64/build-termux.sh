@@ -110,6 +110,13 @@ exec "\$HERE/bin/mtk" "\$HERE/app/mtk.py" "\$@"
 EOF
 chmod 755 "$OUT/bin/mtk" "$OUT/mtk"
 
+ARCHIVE="${OUT}.tar.gz"
+tar -czf "$ARCHIVE" -C "$(dirname "$OUT")" "$(basename "$OUT")"
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+fi
+
 printf '\nBuild complete: %s\n' "$OUT"
 printf 'Executable: %s/bin/mtk\n' "$OUT"
+printf 'Bundle: %s\n' "$ARCHIVE"
 printf 'Run: %s/mtk --help\n' "$OUT"
