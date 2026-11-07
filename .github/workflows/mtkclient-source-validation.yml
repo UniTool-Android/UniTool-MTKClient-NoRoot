@@ -25,6 +25,10 @@ jobs:
       - name: Compile MTK modules
         run: |
           python -m compileall -q mtkclient
+      - name: Validate CLI entry point
+        run: |
+          python -m mtkclient.mtk --help
+          python mtk.py --help
       - name: Validate USB configuration and Python syntax
         run: |
           python - <<'PY'
