@@ -29,6 +29,7 @@ jobs:
         run: |
           python -m mtkclient.mtk --help
           python mtk.py --help
+          python -m mtkclient.usb_probe --help
       - name: Validate USB configuration and Python syntax
         run: |
           python - <<'PY'
