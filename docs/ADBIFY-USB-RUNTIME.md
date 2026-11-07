@@ -1,22 +1,13 @@
-# Adbify USB runtime integration contract
+# Adbify USB integration reference
 
-This project must use the exact Adbify-packaged ARM64 native libraries:
-- `$PREFIX/lib/libusb_bridge.so`
-- `$PREFIX/lib/libusb.so`
+See [antumbra-android](https://github.com/UniTool-Android/antumbra-android), specifically:
 
-The terminal runtime exports:
-- `PREFIX=<app-private files/usr>`
-- `LD_LIBRARY_PATH=$PREFIX/lib:<ApplicationInfo.nativeLibraryDir>`
-- `UNITOOL_LIBUSB_PATH=$PREFIX/lib/libusb.so`
-- `UNITOOL_LIBUSB_BRIDGE_PATH=$PREFIX/lib/libusb_bridge.so`
+- `android/app/src/main/java/com/penumbra/antumbra/UsbHelper.kt`
+- `crates/android-usb/src/lib.rs`
+- `crates/jni-bridge/src/lib.rs`
 
-The paths above are canonicalized by the app before starting a child process. Clients must never silently fall back to system libusb on Android. Missing bridge/library files must produce a clear startup error. Keep CDLL handles alive for the lifetime of PyUSB/libusb use, preload bridge with RTLD_GLOBAL before libusb, and verify the loaded file paths.
+It shows Android's USB Host permission and connection lifecycle and provides a Rust `MtkPort` implementation over JNI. This is a Java USB Host backend, not Adbify's libusb broker. It should not be represented as using `libusb_bridge.so`.
 
-USB permissions:
-- USB host permission is granted by Android for the app UID/device via UsbManager.
-- A child CLI process cannot independently obtain Android UsbManager permission. Any bridge relying on app-side permission brokerage needs a documented IPC/JNI contract and an open app-side service/session.
-- Do not claim that the terminal environment alone grants USB permission.
-- Keep non-Android PyUSB backend behavior unchanged.
+The reference's DA/flash/unlock/relock JNI entrypoints are unfinished placeholders and its workflow uses `continue-on-error: true` on build steps. Treat it as an architectural reference, not a tested complete implementation.
 
-Architecture goal:
-Adbify is the only Android USB backend/runtime owner. MTKClient and Umbrage consume it; do not statically or dynamically load a second libusb build, do not use raw Android bulkTransfer in parallel, and do not ship duplicate USB drivers.
+The required Adbify libusb bridge integration still needs the bridge's source or an authoritative ABI/IPC contract.

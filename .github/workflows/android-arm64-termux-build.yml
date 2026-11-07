@@ -4,12 +4,14 @@ on:
   push:
     branches:
       - feature/android-arm64-standalone-runtime
+      - feature/adbify-usb-runtime
     paths:
       - "build/android-arm64/**"
       - "mtk.py"
       - "mtkclient/**"
       - "requirements.txt"
       - ".github/workflows/android-arm64-termux-build.yml"
+      - "docs/**"
   pull_request:
     branches:
       - feature/android-arm64-standalone-runtime
@@ -19,6 +21,7 @@ on:
       - "mtkclient/**"
       - "requirements.txt"
       - ".github/workflows/android-arm64-termux-build.yml"
+      - "docs/**"
   workflow_dispatch:
 
 permissions:
@@ -33,20 +36,16 @@ jobs:
     name: Validate source and build scripts
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Check shell syntax
+      - uses: actions/checkout@v4
+      - name: Check shell and Python syntax
         run: |
           bash -n build/android-arm64/build-termux.sh
           bash -n build/android-arm64/build.sh
-
-      - name: Set up host Python
-        uses: actions/setup-python@v5
+          python -m py_compile build/android-arm64/fetch-termux-runtime.py
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Validate Python source
+      - name: Validate MTKClient Python source
         run: |
           python -m compileall -q mtkclient
           python -m pip install --upgrade pip
@@ -55,70 +54,86 @@ jobs:
           python -m mtkclient.usb_probe --help
 
   build-android-arm64:
-    name: Build Android ARM64 Termux runtime
-    # This job must run on a real Android ARM64/Termux environment because
-    # build-termux.sh links against Termux's Bionic-compatible libpython.
-    runs-on: [self-hosted, android, arm64, termux]
+    name: Cross-build Android ARM64 runtime (Ubuntu + NDK)
+    runs-on: ubuntu-latest
     needs: validate
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Verify Android ARM64 runner
+      - name: Install Android NDK
         shell: bash
         run: |
           set -Eeuo pipefail
-          test "$(uname -m)" = "aarch64"
-          test -n "${PREFIX:-}"
-          test -d "$PREFIX/lib"
-          command -v pkg
-          command -v clang
-          command -v python
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -path '*/bin/sdkmanager' | sort -V | tail -n 1)"
+          test -x "$SDKMANAGER" || { echo "Android sdkmanager not found under $SDK_ROOT" >&2; exit 1; }
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install "ndk;27.2.12479018"
+          test -x "$SDK_ROOT/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
+          echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          echo "ANDROID_API=24" >> "$GITHUB_ENV"
 
-      - name: Install native build tools
+      - name: Install host packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev file xz-utils
+
+      - name: Fetch Android/Bionic CPython runtime
         shell: bash
         run: |
           set -Eeuo pipefail
-          pkg update
-          pkg install -y clang binutils python tar
+          python3 build/android-arm64/fetch-termux-runtime.py
+          PREFIX="$GITHUB_WORKSPACE/out/termux-prefix"
+          PYINC="$(find "$PREFIX/include" -maxdepth 2 -name Python.h -print -quit)"
+          PYVER="$(basename "$(dirname "$PYINC")" | sed 's/^python//')"
+          test -n "$PYINC"
+          test -f "$PREFIX/lib/libpython$PYVER.so"
+          test -d "$PREFIX/lib/python$PYVER"
+          echo "CPYTHON_ANDROID_PREFIX=$PREFIX" >> "$GITHUB_ENV"
+          echo "PYTHON_VERSION=$PYVER" >> "$GITHUB_ENV"
+          echo "ANDROID_SITE_PACKAGES=$PREFIX/lib/python$PYVER/site-packages" >> "$GITHUB_ENV"
+          mkdir -p "$PREFIX/lib/python$PYVER/site-packages"
 
-      - name: Install Python runtime dependencies
+      - name: Install pure Python application dependencies
         shell: bash
         run: |
           set -Eeuo pipefail
-          unset ANDROID_NDK_HOME ANDROID_NDK_ROOT NDK_HOME NDK_ROOT
-          unset _PYTHON_HOST_PLATFORM _PYTHON_SYSCONFIGDATA_NAME
-          export CC=clang
-          export CXX=clang++
-          export LDSHARED="clang -shared"
-          python -m pip install --upgrade pip
-          python -m pip install --no-build-isolation \
-            pyusb pyserial colorama pycryptodome pycryptodomex fusepy
+          python3 -m pip install --upgrade pip
+          python3 -m pip install --no-deps --target "$ANDROID_SITE_PACKAGES" pyusb pyserial colorama fusepy
+          test -d "$ANDROID_SITE_PACKAGES/usb"
+          test -d "$ANDROID_SITE_PACKAGES/serial"
 
-      - name: Build native Android executable bundle
+      - name: Cross-compile Android ARM64 launcher and bundle
         shell: bash
         run: |
           set -Eeuo pipefail
-          export CC=clang
-          export CXX=clang++
-          ./build/android-arm64/build-termux.sh
-
-      - name: Verify ARM64 ELF and CLI
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          test -x dist/android-arm64/bin/mtk
-          readelf -h dist/android-arm64/bin/mtk | grep -q 'AArch64'
-          ./dist/android-arm64/mtk --help
-
-      - name: Generate checksum
-        shell: bash
-        run: |
-          set -Eeuo pipefail
+          NDK="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CC="$NDK/aarch64-linux-android${ANDROID_API}-clang"
+          export STRIP="$NDK/llvm-strip"
+          export CPYTHON_ANDROID_PREFIX ANDROID_SITE_PACKAGES PYTHON_VERSION ANDROID_API
+          export MTK_ENTRY_SCRIPT=mtk.py
+          bash build/android-arm64/build.sh
+          "$NDK/llvm-strip" dist/android-arm64/bin/mtk
+          tar -czf dist/android-arm64.tar.gz -C dist android-arm64
           sha256sum dist/android-arm64.tar.gz > dist/android-arm64.tar.gz.sha256
 
-      - name: Upload Android ARM64 artifact
-        uses: actions/upload-artifact@v4
+      - name: Verify Android ARM64 ELF and runtime layout
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ELF=dist/android-arm64/bin/mtk
+          file "$ELF" | grep -E 'ARM aarch64|ARM64'
+          readelf -h "$ELF" | grep -q 'AArch64'
+          readelf -d "$ELF" | grep -q 'libpython'
+          test -f "dist/android-arm64/lib/libpython$PYTHON_VERSION.so"
+          test -d dist/android-arm64/python/site-packages/usb
+          test -d dist/android-arm64/python/site-packages/serial
+          tar -tzf dist/android-arm64.tar.gz > "$RUNNER_TEMP/android-arm64-files.txt"
+          grep -Fqx 'android-arm64/bin/mtk' "$RUNNER_TEMP/android-arm64-files.txt"
+
+      - uses: actions/upload-artifact@v4
         with:
           name: mtkclient-android-arm64
           path: |

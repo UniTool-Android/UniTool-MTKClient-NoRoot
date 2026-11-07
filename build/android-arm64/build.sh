@@ -22,7 +22,11 @@ rm -rf "$OUT"
 mkdir -p "$OUT/bin" "$OUT/lib" "$OUT/python/lib" "$OUT/python/site-packages" "$OUT/app"
 cp -a "$STD" "$OUT/python/lib/"
 cp -a "$ANDROID_SITE_PACKAGES/." "$OUT/python/site-packages/"
-cp "$LIB" "$OUT/lib/"
+# Bundle the Termux/Bionic shared-library dependencies extracted from the
+# official aarch64 packages. Keep symlinks so SONAME resolution remains valid.
+find "$CPYTHON_ANDROID_PREFIX/lib" -maxdepth 1 \( -type f -o -type l \) \
+  \( -name "*.so" -o -name "*.so.*" \) -exec cp -a -t "$OUT/lib/" {} +
+cp -a "$LIB" "$OUT/lib/"
 cp -a "$ROOT/mtkclient" "$OUT/app/"
 cp "${ROOT}/${MTK_ENTRY_SCRIPT}" "$OUT/app/"
 [[ ! -d "$ROOT/src" ]] || cp -a "$ROOT/src" "$OUT/app/"
@@ -32,5 +36,6 @@ cp "${ROOT}/${MTK_ENTRY_SCRIPT}" "$OUT/app/"
   -Wl,-rpath,'$ORIGIN/../lib' -o "$OUT/bin/mtk"
 "$STRIP" "$OUT/bin/mtk"
 printf 'Target: Android arm64-v8a\nAPI: %s\nCPython: %s\nEntry: %s\n' "$API" "$PYVER" "$MTK_ENTRY_SCRIPT" > "$OUT/BUILD-INFO.txt"
+printf 'Bundled shared libraries: %s\\n' "$(find "$OUT/lib" -maxdepth 1 -name '*.so*' | wc -l)" >> "$OUT/BUILD-INFO.txt"
 echo "Staged runtime: $OUT"
 echo "Run: $OUT/bin/mtk <entry-script.py> --help"
