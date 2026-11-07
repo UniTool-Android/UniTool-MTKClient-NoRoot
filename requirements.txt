@@ -2,4 +2,5 @@ pyusb
 libusb
 pyserial
 pycryptodome
+pycryptodomex
 colorama
