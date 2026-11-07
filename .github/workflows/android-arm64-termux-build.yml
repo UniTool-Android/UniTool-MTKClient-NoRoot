@@ -1,0 +1,128 @@
+name: Android ARM64 standalone executable
+
+on:
+  push:
+    branches:
+      - feature/android-arm64-standalone-runtime
+    paths:
+      - "build/android-arm64/**"
+      - "mtk.py"
+      - "mtkclient/**"
+      - "requirements.txt"
+      - ".github/workflows/android-arm64-termux-build.yml"
+  pull_request:
+    branches:
+      - feature/android-arm64-standalone-runtime
+    paths:
+      - "build/android-arm64/**"
+      - "mtk.py"
+      - "mtkclient/**"
+      - "requirements.txt"
+      - ".github/workflows/android-arm64-termux-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-arm64-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate source and build scripts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check shell syntax
+        run: |
+          bash -n build/android-arm64/build-termux.sh
+          bash -n build/android-arm64/build.sh
+
+      - name: Set up host Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate Python source
+        run: |
+          python -m compileall -q mtkclient
+          python -m pip install --upgrade pip
+          python -m pip install pyusb pyserial colorama pycryptodome pycryptodomex fusepy
+          python -m mtkclient.mtk --help
+          python -m mtkclient.usb_probe --help
+
+  build-android-arm64:
+    name: Build Android ARM64 Termux runtime
+    # This job must run on a real Android ARM64/Termux environment because
+    # build-termux.sh links against Termux's Bionic-compatible libpython.
+    runs-on: [self-hosted, android, arm64, termux]
+    needs: validate
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Android ARM64 runner
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test "$(uname -m)" = "aarch64"
+          test -n "${PREFIX:-}"
+          test -d "$PREFIX/lib"
+          command -v pkg
+          command -v clang
+          command -v python
+
+      - name: Install native build tools
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          pkg update
+          pkg install -y clang binutils python tar
+
+      - name: Install Python runtime dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          unset ANDROID_NDK_HOME ANDROID_NDK_ROOT NDK_HOME NDK_ROOT
+          unset _PYTHON_HOST_PLATFORM _PYTHON_SYSCONFIGDATA_NAME
+          export CC=clang
+          export CXX=clang++
+          export LDSHARED="clang -shared"
+          python -m pip install --upgrade pip
+          python -m pip install --no-build-isolation \
+            pyusb pyserial colorama pycryptodome pycryptodomex fusepy
+
+      - name: Build native Android executable bundle
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export CC=clang
+          export CXX=clang++
+          ./build/android-arm64/build-termux.sh
+
+      - name: Verify ARM64 ELF and CLI
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -x dist/android-arm64/bin/mtk
+          readelf -h dist/android-arm64/bin/mtk | grep -q 'AArch64'
+          ./dist/android-arm64/mtk --help
+
+      - name: Generate checksum
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sha256sum dist/android-arm64.tar.gz > dist/android-arm64.tar.gz.sha256
+
+      - name: Upload Android ARM64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtkclient-android-arm64
+          path: |
+            dist/android-arm64.tar.gz
+            dist/android-arm64.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
