@@ -10,6 +10,7 @@ on:
       - "mtkclient/**"
       - "requirements.txt"
       - ".github/workflows/android-arm64-termux-build.yml"
+      - "docs/**"
   pull_request:
     branches:
       - feature/android-arm64-standalone-runtime
@@ -19,6 +20,7 @@ on:
       - "mtkclient/**"
       - "requirements.txt"
       - ".github/workflows/android-arm64-termux-build.yml"
+      - "docs/**"
   workflow_dispatch:
 
 permissions:
