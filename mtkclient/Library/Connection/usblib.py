@@ -372,10 +372,15 @@ class UsbClass(DeviceClass):
             return False
 
         def find_mtk_device(devices):
+            # portconfig is a mapping: VID -> {PID: interface number}.
+            # Do not fall back to a different USB library on Android: the
+            # authorized device handle is owned by UniTool's libusb broker.
+            if not hasattr(self.portconfig, "get"):
+                self.error("Invalid USB port configuration; expected VID/PID mapping.")
+                return None
             for dev in devices:
-                if dev.idVendor not in [0x0E8D, 0x1004, 0x22d9, 0x0FCE]:
-                    continue
-                if dev.idVendor in self.portconfig and dev.idProduct in self.portconfig[dev.idVendor]:
+                products = self.portconfig.get(dev.idVendor)
+                if products is not None and dev.idProduct in products:
                     return dev
             return None
 
