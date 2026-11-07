@@ -85,3 +85,63 @@ device, verify permission, enumeration, interface claim, one harmless
 descriptor/control read, bulk IN/OUT, timeout behavior, disconnect handling,
 and release/close. Do not report transport support as complete until these
 checks pass with the actual Adbify APK and USB device.
+
+
+## Build directly on an Android ARM64 device (Termux / Adbify)
+
+For a device-native build, use `build-termux.sh`. This avoids accidentally
+reusing an NDK compiler path from another host (for example, a
+`darwin-x86_64` compiler path copied from a macOS build environment).
+
+Install the native compiler and Python development environment first:
+
+```sh
+pkg update
+pkg install clang binutils python -y
+```
+
+Install the Python packages required by this checkout into the same Python
+environment that will be used for the build. The executable builder checks
+these imports before compiling:
+
+- `usb` (PyUSB)
+- `serial` (pyserial)
+- `colorama`
+- `Crypto.Cipher.AES` and `Crypto.Hash.SHA256` (PyCryptodome)
+
+If pip reports a compiler path under `darwin-x86_64` or another host that is
+not the current Android device, do not reuse that cross-build virtual
+environment. Use the native Termux Python environment and set its compiler
+explicitly:
+
+```sh
+unset ANDROID_NDK_HOME ANDROID_NDK_ROOT NDK_HOME NDK_ROOT
+unset _PYTHON_HOST_PLATFORM _PYTHON_SYSCONFIGDATA_NAME
+export CC=clang
+export CXX=clang++
+export LDSHARED="clang -shared"
+python -m pip install --no-build-isolation pyusb pyserial colorama pycryptodome
+```
+
+Build the executable bundle:
+
+```sh
+chmod +x build/android-arm64/build-termux.sh
+./build/android-arm64/build-termux.sh
+```
+
+The output is `dist/android-arm64/`. Run the generated launcher:
+
+```sh
+./dist/android-arm64/mtk --help
+```
+
+The native `bin/mtk` is an Android ARM64 ELF executable. It embeds CPython
+through `libpython`, and the output directory contains the Python standard
+library, installed site-packages, application source, and shared CPython
+library. It does not require invoking the `python` command at runtime.
+Android system libraries and any external shared libraries required by the
+Termux Python build must still be available on the device; this is not a
+statically linked, single-file binary. The bundle is built for the current
+Android/Termux ABI and should be rebuilt for a different Python version or
+application prefix.
