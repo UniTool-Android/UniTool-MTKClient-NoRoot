@@ -4,11 +4,11 @@
 import time
 import sys
 import logging
+import glob
 from queue import Queue
 
 from mtkclient.Library.DA.xmlflash.xml_param import max_xml_data_length
 import serial
-import serial.tools.list_ports
 import inspect
 from mtkclient.Library.Connection.devicehandler import DeviceClass
 
@@ -98,7 +98,25 @@ class SerialClass(DeviceClass):
 
     def detectdevices(self):
         ids = []
-        for port in serial.tools.list_ports.comports():
+
+        # pySerial 3.5 has no list_ports backend for Android
+        # (sys.platform == "android"). Do not import that backend at
+        # module load time: the normal MTK USB transport does not use it.
+        if sys.platform == "android":
+            patterns = (
+                "/dev/ttyUSB*", "/dev/ttyACM*", "/dev/ttyHS*",
+                "/dev/ttyGS*", "/dev/ttyMT*", "/dev/ttyMSM*",
+                "/dev/ttyAMA*", "/dev/ttyS*",
+            )
+            for pattern in patterns:
+                for device in glob.glob(pattern):
+                    if device not in ids:
+                        ids.append(device)
+            return sorted(ids)
+
+        from serial.tools import list_ports
+
+        for port in list_ports.comports():
             for usbid in self.portconfig:
                 if "ttyUSB" in port.device or "ttyACM" in port.device:
                     if port.device not in ids:

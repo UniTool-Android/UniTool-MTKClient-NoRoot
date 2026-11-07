@@ -16,7 +16,64 @@ import usb.backend.libusb1
 from struct import pack, calcsize
 from enum import Enum
 from binascii import hexlify
-from ctypes import c_void_p, c_int
+from ctypes import CDLL, RTLD_GLOBAL, c_void_p, c_int
+
+
+_ANDROID_LIBUSB_HANDLES = []
+
+
+def _android_libusb_backend():
+    """Load Adbify's broker-enabled libusb by absolute path.
+
+    Adbify installs libusb.so and libusb_bridge.so under $PREFIX/lib. The
+    bridge is preloaded globally before libusb so its symbols/dependencies are
+    available to the broker-enabled libusb build.
+    """
+    configured = os.environ.get("UNITOOL_LIBUSB_PATH")
+    prefix = os.environ.get("PREFIX")
+    candidates = [configured] if configured else []
+    if prefix:
+        candidates.extend([
+            os.path.join(prefix, "lib", "libusb.so"),
+            os.path.join(prefix, "lib", "libusb-1.0.so"),
+        ])
+
+    libusb_path = next((os.path.realpath(p) for p in candidates
+                        if p and os.path.isfile(p)), None)
+    if libusb_path is None:
+        raise RuntimeError(
+            "Adbify libusb not found. Set UNITOOL_LIBUSB_PATH to the absolute "
+            "path of Adbify's libusb.so or install it under $PREFIX/lib."
+        )
+
+    bridge_configured = os.environ.get("UNITOOL_LIBUSB_BRIDGE_PATH")
+    bridge_candidates = [bridge_configured] if bridge_configured else []
+    if prefix:
+        bridge_candidates.append(os.path.join(prefix, "lib", "libusb_bridge.so"))
+    bridge_path = next((os.path.realpath(p) for p in bridge_candidates
+                        if p and os.path.isfile(p)), None)
+    if bridge_path is None:
+        raise RuntimeError(
+            "Adbify libusb_bridge.so not found. Set UNITOOL_LIBUSB_BRIDGE_PATH "
+            "or install it under $PREFIX/lib."
+        )
+
+    # Keep both handles alive for the lifetime of the PyUSB backend.
+    _ANDROID_LIBUSB_HANDLES.append(CDLL(bridge_path, mode=RTLD_GLOBAL))
+    _ANDROID_LIBUSB_HANDLES.append(CDLL(libusb_path, mode=RTLD_GLOBAL))
+    return usb.backend.libusb1.get_backend(find_library=lambda _name: libusb_path)
+
+
+def _create_libusb_backend():
+    # Android must use Adbify's USB-broker-aware libraries, never a random
+    # system/Termux libusb discovered by the dynamic linker.
+    prefix = os.environ.get("PREFIX", "")
+    if sys.platform.startswith("linux") and (
+        os.environ.get("ANDROID_ROOT") or os.environ.get("UNITOOL_LIBUSB_PATH")
+        or prefix.startswith("/data/user/") or prefix.startswith("/data/data/")
+    ):
+        return _android_libusb_backend()
+    return usb.backend.libusb1.get_backend(find_library=lambda _name: "libusb-1.0.so")
 
 from mtkclient.Library.DA.xmlflash.xml_param import max_xml_data_length
 from mtkclient.Library.utils import write_object
@@ -130,7 +187,11 @@ class UsbClass(DeviceClass):
         self.is_serial = False
         self.queue = Queue()
         if sys.platform.startswith('freebsd') or sys.platform.startswith('linux') or sys.platform.startswith('darwin'):
-            self.backend = usb.backend.libusb1.get_backend(find_library=lambda x: "libusb-1.0.so")
+            try:
+                self.backend = _create_libusb_backend()
+            except Exception as err:
+                self.backend = None
+                self.error(f"Unable to initialize libusb backend: {err}")
         elif sys.platform.startswith('win32'):
             if calcsize("P") * 8 == 64:
                 self.backend = usb.backend.libusb1.get_backend(find_library=lambda x: "libusb-1.0.dll")
@@ -140,8 +201,9 @@ class UsbClass(DeviceClass):
             try:
                 self.backend.lib.libusb_set_option.argtypes = [c_void_p, c_int]
                 self.backend.lib.libusb_set_option(self.backend.ctx, 1)
-            except Exception:
-                self.backend = None
+            except Exception as err:
+                # This optional tuning call must not disable a working backend.
+                self.debug(f"libusb_set_option unavailable: {err}")
 
     def set_fast_mode(self, enabled):
         self.fast = bool(enabled)
@@ -302,14 +364,38 @@ class UsbClass(DeviceClass):
         self.device = None
         self.EP_OUT = None
         self.EP_IN = None
+        if self.backend is None:
+            self.error(
+                "PyUSB has no active libusb backend. In UniTool, verify "
+                "UNITOOL_LIBUSB_PATH and UNITOOL_LIBUSB_BRIDGE_PATH."
+            )
+            return False
+
+        def find_mtk_device(devices):
+            # portconfig is a mapping: VID -> {PID: interface number}.
+            # Do not fall back to a different USB library on Android: the
+            # authorized device handle is owned by UniTool's libusb broker.
+            if not hasattr(self.portconfig, "get"):
+                self.error("Invalid USB port configuration; expected VID/PID mapping.")
+                return None
+            for dev in devices:
+                products = self.portconfig.get(dev.idVendor)
+                if products is not None and dev.idProduct in products:
+                    return dev
+            return None
+
+        # The device-level class can be 0x00 on some preloaders even when
+        # the CDC class is declared on the interface. Keep the fast filtered
+        # scan, then retry without a class filter before reporting no device.
         devices = usb.core.find(find_all=True, bDeviceClass=devclass, backend=self.backend)
-        for dev in list(filter(lambda x: x.idVendor in [0x0E8D, 0x1004, 0x22d9, 0x0FCE], devices)):
-            if dev.idVendor in self.portconfig and dev.idProduct in self.portconfig[dev.idVendor]:
-                self.device = dev
-                self.vid = dev.idVendor
-                self.pid = dev.idProduct
-                self.interface = self.portconfig[dev.idVendor][dev.idProduct]
-                break
+        self.device = find_mtk_device(devices)
+        if self.device is None:
+            devices = usb.core.find(find_all=True, backend=self.backend)
+            self.device = find_mtk_device(devices)
+        if self.device is not None:
+            self.vid = self.device.idVendor
+            self.pid = self.device.idProduct
+            self.interface = self.portconfig[self.vid][self.pid]
         if self.device is None:
             self.debug("Couldn't detect the device. Is it connected ?")
             return False
@@ -319,22 +405,50 @@ class UsbClass(DeviceClass):
             if e.strerror == "Configuration not set":
                 self.device.set_configuration()
                 self.configuration = self.device.get_active_configuration()
-            if e.errno == 13:
+            if e.errno == 13 and not (
+                os.environ.get("UNITOOL_LIBUSB_PATH")
+                or os.environ.get("UNITOOL_LIBUSB_BRIDGE_PATH")
+                or os.environ.get("ANDROID_ROOT")
+            ):
+                # Keep the legacy libusb0 fallback on desktop Linux only.
+                # Android must stay on UniTool's UsbManager-authorized backend.
                 self.backend = usb.backend.libusb0.get_backend()
                 self.device = usb.core.find(idVendor=self.vid, idProduct=self.pid, backend=self.backend)
         if self.configuration is None:
             self.error("Couldn't get device configuration.")
             return False
         if self.interface == -1:
+            interfaces = []
             for interfacenum in range(0, self.configuration.bNumInterfaces):
                 itf = usb.util.find_descriptor(self.configuration, bInterfaceNumber=interfacenum)
-                if self.devclass != -1:
-                    if itf.bInterfaceClass == self.devclass:  # MassStorage
-                        self.interface = interfacenum
-                        break
-                else:
+                if itf is not None:
+                    interfaces.append((interfacenum, itf))
+
+            # Prefer the configured CDC data interface when present.
+            for interfacenum, itf in interfaces:
+                if self.devclass != -1 and itf.bInterfaceClass == self.devclass:
                     self.interface = interfacenum
                     break
+
+            # MediaTek 0E8D:2000 devices may expose a vendor/CDC-control
+            # interface rather than CDC-data class 0x0A. Select the first
+            # interface that actually has both bulk directions instead of
+            # rejecting a valid authorized UsbManager session.
+            if self.interface == -1:
+                for interfacenum, itf in interfaces:
+                    has_in = usb.util.find_descriptor(
+                        itf,
+                        custom_match=lambda ep: usb.util.endpoint_direction(ep.bEndpointAddress)
+                        == usb.util.ENDPOINT_IN
+                    ) is not None
+                    has_out = usb.util.find_descriptor(
+                        itf,
+                        custom_match=lambda ep: usb.util.endpoint_direction(ep.bEndpointAddress)
+                        == usb.util.ENDPOINT_OUT
+                    ) is not None
+                    if has_in and has_out:
+                        self.interface = interfacenum
+                        break
 
         self.debug(self.configuration)
         if self.interface > self.configuration.bNumInterfaces:
